@@ -222,22 +222,52 @@ while [[ $# -gt 0 ]]; do
             if [[ "${2:-}" && ! "${2:-}" =~ ^- ]]; then
                 # Flag with value
                 case "$1" in
-                    --private-key|--account|-a|--mnemonic*|--keystore*|--password*|--ledger|--trezor|--aws|--gcp)
-                        # Authentication flags only for cast send
+                    # Cast send only - wallet options
+                    --private-key|--account|--keystore|--password|--password-file|\
+                    --mnemonic|--mnemonic-passphrase|--mnemonic-derivation-path|--mnemonic-index|\
+                    -f|--from)
                         CAST_SEND_ARGS+=("$1" "$2")
                         ;;
-                    --rpc-url|-r|--chain|--chain-id)
-                        # Network flags for all commands
+                    # Cast send only - transaction options
+                    --gas-limit|--gas-price|--priority-gas-price|--value|--nonce|\
+                    --blob-gas-price|--auth|--access-list|--path|--timeout)
+                        CAST_SEND_ARGS+=("$1" "$2")
+                        ;;
+                    # Network options - used by cast and forge verify
+                    -r|--rpc-url|-c|--chain|--jwt-secret|--rpc-timeout|--rpc-headers)
                         CAST_SEND_ARGS+=("$1" "$2")
                         CAST_READ_ARGS+=("$1" "$2")
                         FORGE_ARGS+=("$1" "$2")
                         ;;
-                    --etherscan-api-key|--verifier|--verifier-url)
-                        # Verification flags only for forge commands
+                    # Forge verify only
+                    -e|--etherscan-api-key|--verifier|--verifier-api-key|--verifier-url|\
+                    --retries|--delay|--compiler-version|--compilation-profile|\
+                    --num-of-optimizations|--constructor-args-path)
+                        FORGE_ARGS+=("$1" "$2")
+                        ;;
+                    # Forge build and verify
+                    --optimizer-runs|--evm-version|--libraries|--root|--via-ir)
+                        FORGE_ARGS+=("$1" "$2")
+                        ;;
+                    # Forge build only
+                    --ignored-error-codes|--use|--optimize|\
+                    --extra-output|--extra-output-files|-o|--out|--revert-strings|\
+                    --build-info-path|-C|--contracts|-R|--remappings|--remappings-env|\
+                    --cache-path|--lib-paths|--skip)
+                        FORGE_ARGS+=("$1" "$2")
+                        ;;
+                    # Cast read operations
+                    -B|--block|--confirmations)
+                        CAST_READ_ARGS+=("$1" "$2")
+                        ;;
+                    # Common display options
+                    --color|-v|--verbosity|-j|--threads|--jobs)
+                        CAST_SEND_ARGS+=("$1" "$2")
+                        CAST_READ_ARGS+=("$1" "$2")
                         FORGE_ARGS+=("$1" "$2")
                         ;;
                     *)
-                        # Other flags for all commands
+                        # Unknown flags - pass to all for safety
                         CAST_SEND_ARGS+=("$1" "$2")
                         CAST_READ_ARGS+=("$1" "$2")
                         FORGE_ARGS+=("$1" "$2")
@@ -247,22 +277,43 @@ while [[ $# -gt 0 ]]; do
             else
                 # Flag without value
                 case "$1" in
-                    -i|--interactive|-l|--ledger|-t|--trezor|--aws|--gcp|--unlocked)
-                        # Authentication flags only for cast send
+                    # Cast send only - wallet options
+                    -i|--interactive|-l|--ledger|-t|--trezor|--aws|--unlocked)
                         CAST_SEND_ARGS+=("$1")
                         ;;
-                    -j|--json)
-                        # JSON output for all commands
+                    # Cast send only - transaction options
+                    --legacy|--blob|--async)
+                        CAST_SEND_ARGS+=("$1")
+                        ;;
+                    # Forge build only
+                    --no-metadata|--names|--sizes|--ignore-eip-3860|--no-cache|--eof|\
+                    --force|--deny-warnings|--no-auto-detect|--offline|\
+                    --ast|--build-info|--hardhat)
+                        FORGE_ARGS+=("$1")
+                        ;;
+                    # Forge verify only
+                    --flatten|--skip-is-verified-check|--watch|--show-standard-json-input|\
+                    --guess-constructor-args|-f)
+                        FORGE_ARGS+=("$1")
+                        ;;
+                    # Forge build and verify
+                    --via-ir)
+                        FORGE_ARGS+=("$1")
+                        ;;
+                    # Network options
+                    --flashbots)
                         CAST_SEND_ARGS+=("$1")
                         CAST_READ_ARGS+=("$1")
                         FORGE_ARGS+=("$1")
                         ;;
-                    --no-metadata)
-                        # Forge build flag only
+                    # Common display options
+                    --json|-q|--quiet)
+                        CAST_SEND_ARGS+=("$1")
+                        CAST_READ_ARGS+=("$1")
                         FORGE_ARGS+=("$1")
                         ;;
                     *)
-                        # Other flags for all commands
+                        # Unknown flags - pass to all for safety
                         CAST_SEND_ARGS+=("$1")
                         CAST_READ_ARGS+=("$1")
                         FORGE_ARGS+=("$1")
