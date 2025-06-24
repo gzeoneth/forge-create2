@@ -65,7 +65,7 @@ CONTRACT can be:
   - Path with contract: src/SimpleStorage.sol:SimpleStorage
 
 Custom Options:
-  --constructor-args <args>  Constructor arguments for the contract
+  --constructor-args <args>  Constructor arguments (consumes all args until next --)
   --salt <hex>              Salt for deterministic address (default: 0x0)
   --verify                  Verify contract on Etherscan after deployment
   --dry-run                 Calculate address without deploying
@@ -92,8 +92,8 @@ Examples:
   # Deploy using path with contract name
   $SCRIPT_NAME src/Token.sol:Token --rpc-url https://eth.rpc --account myDeployer
 
-  # With constructor arguments
-  $SCRIPT_NAME Token --constructor-args "1000000 'MyToken' 'MTK'"
+  # With constructor arguments (no quotes needed)
+  $SCRIPT_NAME Token --constructor-args 1000000 MyToken MTK --rpc-url https://eth.rpc
 
   # Dry run with custom salt
   $SCRIPT_NAME MyContract --salt 0xdeadbeef --dry-run --rpc-url https://eth.rpc
@@ -201,9 +201,18 @@ verify_contract() {
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --constructor-args)
-            CONSTRUCTOR_ARGS="${2:-}"
-            [[ -z "$CONSTRUCTOR_ARGS" ]] && { log_error "--constructor-args requires a value"; exit 1; }
-            shift 2
+            shift # Move past --constructor-args
+            CONSTRUCTOR_ARGS=""
+            # Collect all arguments until we hit another flag starting with --
+            while [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; do
+                if [[ -n "$CONSTRUCTOR_ARGS" ]]; then
+                    CONSTRUCTOR_ARGS="$CONSTRUCTOR_ARGS $1"
+                else
+                    CONSTRUCTOR_ARGS="$1"
+                fi
+                shift
+            done
+            [[ -z "$CONSTRUCTOR_ARGS" ]] && { log_error "--constructor-args requires at least one value"; exit 1; }
             ;;
         --salt)
             SALT="${2:-}"

@@ -47,7 +47,7 @@ CONTRACT can be specified as:
 
 ### Optional Arguments
 
-- `--constructor-args <args>`: Constructor arguments
+- `--constructor-args <args>`: Constructor arguments (consumes all args until next `--` flag)
 - `--salt <value>`: Salt value for CREATE2 (default: 0)
 - `--verify`: Verify contract on Etherscan after deployment
 - `--etherscan-api-key <key>`: Etherscan API key for verification
@@ -73,15 +73,19 @@ Deploy a contract with no constructor arguments:
 
 ### With Constructor Arguments
 
+The `--constructor-args` flag consumes all arguments until it encounters another flag starting with `--`. This means:
+- Simple arguments don't need quotes: `--constructor-args 42 MyToken MTK`
+- Complex arguments (arrays, tuples) still need quotes: `--constructor-args '[1,2,3]'`
+- Strings with spaces need quotes: `--constructor-args "Hello World" 42`
+
 #### Deploy SimpleStorage (single uint256 argument)
 ```bash
-./forge-create2 src/SimpleStorage.sol \
-  --constructor-args "42" \
+# Using contract name - no quotes needed for simple args
+./forge-create2 SimpleStorage \
+  --constructor-args 42 \
   --rpc-url https://sepolia-rollup.arbitrum.io/rpc \
   --private-key <YOUR_PRIVATE_KEY> \
-  --salt 0x1111111111 \
-  --verify \
-  --etherscan-api-key <YOUR_API_KEY>
+  --salt 0x1111111111
 ```
 
 #### Deploy Counter (uint, bytes32, bytes32[] array)
