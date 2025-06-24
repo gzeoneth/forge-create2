@@ -377,6 +377,9 @@ done
 [[ "${DEBUG:-}" == "1" ]] && log_info "Build flags: ${build_flags[*]}"
 forge build "${build_flags[@]}" || { log_error "Build failed"; exit 1; }
 
+# Get the output directory from forge config with the same flags
+OUT_DIR=$(forge config --json "${build_flags[@]}" 2>/dev/null | jq -r '.out // "out"') || OUT_DIR="out"
+
 # Parse contract path and name
 if [[ "$CONTRACT" == *":"* ]]; then
     CONTRACT_PATH="${CONTRACT%%:*}"
@@ -388,7 +391,7 @@ fi
 CONTRACT_FILE=$(basename "$CONTRACT_PATH")
 
 # Locate artifact
-ARTIFACT_PATH="out/${CONTRACT_FILE}/${CONTRACT_NAME}.json"
+ARTIFACT_PATH="${OUT_DIR}/${CONTRACT_FILE}/${CONTRACT_NAME}.json"
 if [[ ! -f "$ARTIFACT_PATH" ]]; then
     log_error "Artifact not found: $ARTIFACT_PATH"
     exit 1
