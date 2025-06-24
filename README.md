@@ -35,6 +35,10 @@ A CLI tool for deterministic smart contract deployment using CREATE2 opcode thro
 ./forge-create2 [OPTIONS] <CONTRACT>
 ```
 
+CONTRACT can be specified as:
+- Contract name: `SimpleStorage`
+- Path with contract: `src/SimpleStorage.sol:SimpleStorage`
+
 ### Required Options
 
 - `--rpc-url <url>`: RPC endpoint URL (must start with http:// or https://)
