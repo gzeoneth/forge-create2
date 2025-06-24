@@ -246,11 +246,16 @@ while [[ $# -gt 0 ]]; do
                     --blob-gas-price|--auth|--access-list|--path|--timeout)
                         CAST_SEND_ARGS+=("$1" "$2")
                         ;;
-                    # Network options - used by cast and forge verify
-                    -r|--rpc-url|-c|--chain|--jwt-secret|--rpc-timeout|--rpc-headers)
+                    # Network options - forge verify needs rpc-url and chain
+                    -r|--rpc-url|-c|--chain)
                         CAST_SEND_ARGS+=("$1" "$2")
                         CAST_READ_ARGS+=("$1" "$2")
                         FORGE_ARGS+=("$1" "$2")
+                        ;;
+                    # Network options - only for cast commands
+                    --jwt-secret|--rpc-timeout|--rpc-headers)
+                        CAST_SEND_ARGS+=("$1" "$2")
+                        CAST_READ_ARGS+=("$1" "$2")
                         ;;
                     # Forge verify only
                     -e|--etherscan-api-key|--verifier|--verifier-api-key|--verifier-url|\
@@ -313,11 +318,10 @@ while [[ $# -gt 0 ]]; do
                     --via-ir)
                         FORGE_ARGS+=("$1")
                         ;;
-                    # Network options
+                    # Network options - only for cast
                     --flashbots)
                         CAST_SEND_ARGS+=("$1")
                         CAST_READ_ARGS+=("$1")
-                        FORGE_ARGS+=("$1")
                         ;;
                     # Common display options
                     --json|-q|--quiet)
@@ -371,8 +375,8 @@ for i in "${!FORGE_ARGS[@]}"; do
     
     flag="${FORGE_ARGS[$i]}"
     case "$flag" in
-        --rpc-url|--chain|--chain-id|--private-key|--account|--etherscan-api-key|-r|-a)
-            # Skip this flag and its value
+        -r|--rpc-url|-c|--chain|-e|--etherscan-api-key|--verifier*|--retries|--delay)
+            # Skip network and verify-only flags for build
             skip_next=true
             ;;
         *)
