@@ -35,7 +35,8 @@ set -euo pipefail
 
 # Constants
 readonly SCRIPT_NAME="${0##*/}"
-readonly CREATE2_FACTORY="0x4e59b44847b379578588920ca78fbf26c0b4956c"
+readonly DEFAULT_CREATE2_FACTORY="0x4e59b44847b379578588920ca78fbf26c0b4956c"
+readonly CREATE2_FACTORY="${CREATE2_FACTORY:-$DEFAULT_CREATE2_FACTORY}"
 readonly DEFAULT_SALT="0x0000000000000000000000000000000000000000000000000000000000000000"
 
 # Custom arguments
@@ -74,6 +75,11 @@ Standard forge/cast options are automatically passed through:
   --gas-price <price>      Gas price for transactions
   --gas-limit <limit>      Gas limit for transactions
   ...and all other forge/cast options
+
+Environment Variables:
+  CREATE2_FACTORY          CREATE2 factory address (default: 0x4e59b44847b379578588920ca78fbf26c0b4956c)
+  FORGE_CREATE2_PRIVATE_KEY Private key for deployment
+  ETHERSCAN_API_KEY        API key for contract verification
 
 Examples:
   # Deploy with RPC and private key
@@ -154,8 +160,14 @@ verify_contract() {
     # Build contract reference
     local verify_ref="${compilation_target:-$CONTRACT_PATH}:${CONTRACT_NAME}"
     
-    # Build verify command with passthrough args
-    local -a verify_cmd=(forge verify-contract "${FORGE_ARGS[@]}" "$DEPLOYMENT_ADDRESS" "$verify_ref")
+    # Build verify command with passthrough args (excluding --no-metadata)
+    local -a verify_args=()
+    for arg in "${FORGE_ARGS[@]}"; do
+        if [[ "$arg" != "--no-metadata" ]]; then
+            verify_args+=("$arg")
+        fi
+    done
+    local -a verify_cmd=(forge verify-contract "${verify_args[@]}" "$DEPLOYMENT_ADDRESS" "$verify_ref")
     
     # Add constructor args if present
     if [[ -n "${ENCODED_ARGS:-}" ]]; then
@@ -245,6 +257,10 @@ while [[ $# -gt 0 ]]; do
                         CAST_READ_ARGS+=("$1")
                         FORGE_ARGS+=("$1")
                         ;;
+                    --no-metadata)
+                        # Forge build flag only
+                        FORGE_ARGS+=("$1")
+                        ;;
                     *)
                         # Other flags for all commands
                         CAST_SEND_ARGS+=("$1")
@@ -306,6 +322,8 @@ for i in "${!FORGE_ARGS[@]}"; do
             ;;
     esac
 done
+# Debug: Show build flags
+[[ "${DEBUG:-}" == "1" ]] && log_info "Build flags: ${build_flags[*]}"
 forge build "${build_flags[@]}" || { log_error "Build failed"; exit 1; }
 
 # Parse contract path and name
@@ -382,6 +400,7 @@ fi
 
 # Calculate deployment address
 DEPLOYMENT_ADDRESS=$(calculate_create2_address "$CREATE2_FACTORY" "$SALT" "$INIT_CODE")
+log_info "Factory: $CREATE2_FACTORY"
 log_info "CREATE2 address: $DEPLOYMENT_ADDRESS"
 
 # Check if already deployed (unless dry run)

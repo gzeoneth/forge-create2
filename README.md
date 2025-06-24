@@ -157,6 +157,7 @@ Deploy a contract with no constructor arguments:
 ## Environment Variables
 
 You can set these environment variables to avoid passing sensitive data via command line:
+- `CREATE2_FACTORY` - CREATE2 factory address (default: `0x4e59b44847b379578588920ca78fbf26c0b4956c`)
 - `FORGE_CREATE2_PRIVATE_KEY` - Private key for deployment
 - `ETHERSCAN_API_KEY` - API key for contract verification
 
