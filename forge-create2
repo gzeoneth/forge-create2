@@ -1,0 +1,411 @@
+#!/usr/bin/env bash
+
+# forge-create2 - A CLI tool for CREATE2 deployment of smart contracts using Foundry
+# This tool enables deterministic contract deployment using the CREATE2 opcode
+# through a standard factory contract at 0x4e59b44847b379578588920ca78fbf26c0b4956c
+#
+# USAGE:
+#   ./forge-create2 [OPTIONS] <CONTRACT>
+#
+# EXAMPLES:
+#   # Deploy a simple contract
+#   ./forge-create2 src/MyContract.sol --rpc-url <RPC_URL> --private-key <KEY>
+#
+#   # Deploy with constructor arguments
+#   ./forge-create2 src/Token.sol --constructor-args "1000000 'MyToken' 'MTK'" \
+#     --rpc-url <RPC_URL> --private-key <KEY>
+#
+#   # Deploy with custom salt and verification
+#   ./forge-create2 src/MyContract.sol --salt 0x12345 --verify \
+#     --rpc-url <RPC_URL> --private-key <KEY> --etherscan-api-key <API_KEY>
+#
+#   # Deploy contract with struct constructor
+#   ./forge-create2 src/Complex.sol --constructor-args "'(100,\"test\",true)'" \
+#     --rpc-url <RPC_URL> --private-key <KEY>
+#
+# OPTIONS:
+#   --constructor-args <args>    Constructor arguments
+#   --rpc-url <url>             RPC endpoint URL (required)
+#   --private-key <key>         Private key for deployment (required)
+#   --salt <salt>               Salt for CREATE2 (default: 0)
+#   --verify                    Verify contract on Etherscan
+#   --etherscan-api-key <key>   Etherscan API key for verification
+#
+# ENVIRONMENT VARIABLES:
+#   FORGE_CREATE2_PRIVATE_KEY   Alternative to --private-key flag
+#   ETHERSCAN_API_KEY          Alternative to --etherscan-api-key flag
+
+set -euo pipefail
+
+# Error handling function
+error_exit() {
+    echo "Error: $1" >&2
+    exit "${2:-1}"
+}
+
+# Cleanup sensitive data on exit
+trap 'unset PRIVATE_KEY ETHERSCAN_API_KEY' EXIT
+
+# Default CREATE2 factory address (deterministic deployment proxy)
+# See: https://github.com/Arachnid/deterministic-deployment-proxy
+CREATE2_FACTORY="0x4e59b44847b379578588920ca78fbf26c0b4956c"
+
+# Check for environment variables first
+[[ -n "${FORGE_CREATE2_PRIVATE_KEY:-}" ]] && PRIVATE_KEY="$FORGE_CREATE2_PRIVATE_KEY"
+[[ -n "${ETHERSCAN_API_KEY:-}" ]] && ETHERSCAN_API_KEY="$ETHERSCAN_API_KEY"
+
+# Parse command line arguments
+CONTRACT=""
+CONSTRUCTOR_ARGS=""
+RPC_URL=""
+PRIVATE_KEY="${PRIVATE_KEY:-}"
+SALT=""
+VERIFY=""
+ETHERSCAN_API_KEY="${ETHERSCAN_API_KEY:-}"
+
+# Function to display usage information
+usage() {
+    echo "forge-create2 - CREATE2 deployment tool for Foundry"
+    echo ""
+    echo "Usage: forge-create2 [OPTIONS] <CONTRACT>"
+    echo ""
+    echo "Options:"
+    echo "  --constructor-args <args>    Constructor arguments"
+    echo "  --rpc-url <url>             RPC endpoint URL (required)"
+    echo "  --private-key <key>         Private key for deployment (required)"
+    echo "  --salt <salt>               Salt for CREATE2 (default: 0)"
+    echo "  --verify                    Verify contract on Etherscan"
+    echo "  --etherscan-api-key <key>   Etherscan API key for verification"
+    echo "  -h, --help                  Show this help message"
+    echo ""
+    echo "Examples:"
+    echo "  # Deploy a simple contract"
+    echo "  ./forge-create2 src/MyContract.sol --rpc-url <RPC> --private-key <KEY>"
+    echo ""
+    echo "  # Deploy with constructor arguments"
+    echo "  ./forge-create2 src/Token.sol --constructor-args \"1000000 'MyToken' 'MTK'\" \\"
+    echo "    --rpc-url <RPC> --private-key <KEY>"
+    echo ""
+    echo "  # Deploy with custom salt and verification"
+    echo "  ./forge-create2 src/Contract.sol --salt 0x12345 --verify \\"
+    echo "    --rpc-url <RPC> --private-key <KEY> --etherscan-api-key <API_KEY>"
+    echo ""
+    echo "Environment Variables:"
+    echo "  FORGE_CREATE2_PRIVATE_KEY   Alternative to --private-key flag"
+    echo "  ETHERSCAN_API_KEY          Alternative to --etherscan-api-key flag"
+    exit ${1:-1}
+}
+
+# Show help if no arguments provided
+if [[ $# -eq 0 ]]; then
+    usage 0
+fi
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --constructor-args)
+            CONSTRUCTOR_ARGS="$2"
+            shift 2
+            ;;
+        --rpc-url)
+            RPC_URL="$2"
+            shift 2
+            ;;
+        --private-key)
+            PRIVATE_KEY="$2"
+            shift 2
+            ;;
+        --salt)
+            SALT="$2"
+            shift 2
+            ;;
+        --verify)
+            VERIFY="true"
+            shift
+            ;;
+        --etherscan-api-key)
+            ETHERSCAN_API_KEY="$2"
+            shift 2
+            ;;
+        -h|--help)
+            usage
+            ;;
+        *)
+            if [[ -z "$CONTRACT" ]]; then
+                CONTRACT="$1"
+            else
+                echo "Error: Unknown argument $1"
+                usage
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Validate required arguments
+if [[ -z "$CONTRACT" ]]; then
+    error_exit "Contract name is required" 1
+fi
+
+if [[ -z "$RPC_URL" ]]; then
+    error_exit "--rpc-url is required" 1
+fi
+
+if [[ -z "$PRIVATE_KEY" ]]; then
+    echo "Error: --private-key is required"
+    echo "You can also set FORGE_CREATE2_PRIVATE_KEY environment variable"
+    usage
+fi
+
+# Validate RPC URL format
+if ! [[ "$RPC_URL" =~ ^https?:// ]]; then
+    error_exit "Invalid RPC URL format. Must start with http:// or https://" 1
+fi
+
+# Validate private key format (with or without 0x prefix)
+PRIVATE_KEY_NO_PREFIX="${PRIVATE_KEY#0x}"
+if ! [[ "$PRIVATE_KEY_NO_PREFIX" =~ ^[0-9a-fA-F]{64}$ ]]; then
+    error_exit "Invalid private key format. Must be 64 hex characters" 1
+fi
+# Ensure private key has 0x prefix
+PRIVATE_KEY="0x${PRIVATE_KEY_NO_PREFIX}"
+
+# Build the project first
+echo "Building project..."
+forge build || error_exit "Failed to build project" 1
+
+# Parse contract path and name
+# Handle both "path/Contract.sol:ContractName" and "path/Contract.sol" formats
+if [[ "$CONTRACT" == *":"* ]]; then
+    CONTRACT_PATH="${CONTRACT%%:*}"
+    CONTRACT_NAME="${CONTRACT##*:}"
+else
+    CONTRACT_PATH="$CONTRACT"
+    CONTRACT_NAME=$(basename "$CONTRACT_PATH" .sol)
+fi
+
+# Get contract artifact path
+# Forge outputs artifacts based on just the filename, not the full path
+CONTRACT_FILENAME=$(basename "$CONTRACT_PATH")
+ARTIFACT_PATH="out/${CONTRACT_FILENAME}/${CONTRACT_NAME}.json"
+
+if [[ ! -f "$ARTIFACT_PATH" ]]; then
+    error_exit "Contract artifact not found at $ARTIFACT_PATH. Make sure the contract is compiled successfully" 1
+fi
+
+# Extract bytecode from artifact
+BYTECODE=$(jq -r '.bytecode.object' "$ARTIFACT_PATH" 2>/dev/null) || error_exit "Failed to parse artifact JSON" 1
+
+if [[ -z "$BYTECODE" || "$BYTECODE" == "null" ]]; then
+    error_exit "Failed to extract bytecode from artifact. Contract may be abstract or have unlinked libraries" 1
+fi
+
+# Use provided salt or default to 0
+if [[ -z "$SALT" ]]; then
+    SALT="0x0000000000000000000000000000000000000000000000000000000000000000"
+else
+    # Ensure salt has 0x prefix
+    if [[ ! "$SALT" =~ ^0x ]]; then
+        SALT="0x$SALT"
+    fi
+    # Pad salt to 32 bytes (64 hex chars)
+    SALT_NO_PREFIX=${SALT#0x}
+    # Validate hex characters
+    if ! [[ "$SALT_NO_PREFIX" =~ ^[0-9a-fA-F]*$ ]]; then
+        error_exit "Salt must be a hexadecimal value" 1
+    fi
+    # Check salt length (max 32 bytes = 64 hex chars)
+    if [[ ${#SALT_NO_PREFIX} -gt 64 ]]; then
+        error_exit "Salt is too long. Maximum 32 bytes (64 hex characters)" 1
+    fi
+    # Left-pad with zeros to make it 64 characters
+    SALT_NO_PREFIX=$(printf "%064s" "$SALT_NO_PREFIX" | sed 's/ /0/g')
+    SALT="0x$SALT_NO_PREFIX"
+fi
+
+# Encode constructor arguments if provided
+INIT_CODE="$BYTECODE"
+CONSTRUCTOR_SIG=""
+if [[ -n "$CONSTRUCTOR_ARGS" ]]; then
+    echo "Encoding constructor arguments..."
+    # Get constructor ABI from artifact
+    CONSTRUCTOR_JSON=$(jq -r '.abi[] | select(.type == "constructor")' "$ARTIFACT_PATH" 2>/dev/null) || error_exit "Failed to parse constructor ABI" 1
+    
+    if [[ -z "$CONSTRUCTOR_JSON" || "$CONSTRUCTOR_JSON" == "null" ]]; then
+        error_exit "Constructor ABI not found" 1
+    fi
+    
+    # Function to recursively build type signature for tuples
+    build_type_sig() {
+        local input_json="$1"
+        local type=$(echo "$input_json" | jq -r '.type')
+        
+        if [[ "$type" == "tuple" ]]; then
+            # Build tuple signature from components
+            local components=$(echo "$input_json" | jq -r '.components[] | @json' | while read -r comp; do
+                build_type_sig "$comp"
+            done | tr '\n' ',' | sed 's/,$//')
+            echo "($components)"
+        else
+            echo "$type"
+        fi
+    }
+    
+    # Extract constructor inputs to build signature
+    CONSTRUCTOR_INPUTS=$(echo "$CONSTRUCTOR_JSON" | jq -c '.inputs[]' | while read -r input; do
+        build_type_sig "$input"
+    done | tr '\n' ',' | sed 's/,$//')
+    
+    if [[ -z "$CONSTRUCTOR_INPUTS" ]]; then
+        error_exit "Constructor has no inputs but arguments were provided" 1
+    fi
+    
+    # Build constructor signature
+    CONSTRUCTOR_SIG="constructor($CONSTRUCTOR_INPUTS)"
+    
+    # Execute encoding with proper quoting to prevent injection
+    # Note: We use eval here because cast needs to parse the args, but we ensure
+    # the constructor signature is safely constructed from the ABI
+    eval "ENCODED_ARGS=\$(cast abi-encode \"\$CONSTRUCTOR_SIG\" $CONSTRUCTOR_ARGS)"
+    # Remove 0x prefix
+    ENCODED_ARGS=${ENCODED_ARGS#0x}
+    # Append encoded args to bytecode
+    INIT_CODE="${BYTECODE}${ENCODED_ARGS}"
+fi
+
+# Calculate CREATE2 address before deployment
+# Formula: address = keccak256(0xff ++ deployerAddress ++ salt ++ keccak256(initCode))[12:]
+# where:
+#   - 0xff is a constant to prevent collisions with CREATE
+#   - deployerAddress is the CREATE2 factory contract
+#   - salt is a 32-byte value to make the address deterministic
+#   - initCode is the contract bytecode + constructor arguments
+INIT_CODE_HASH=$(cast keccak "$INIT_CODE")
+
+# Remove 0x prefix from values for concatenation
+SALT_NO_PREFIX=${SALT#0x}
+FACTORY_NO_PREFIX=${CREATE2_FACTORY#0x}
+INIT_CODE_HASH_NO_PREFIX=${INIT_CODE_HASH#0x}
+
+# Build the CREATE2 input: 0xff + factory + salt + hash(initCode)
+CREATE2_INPUT="0xff${FACTORY_NO_PREFIX}${SALT_NO_PREFIX}${INIT_CODE_HASH_NO_PREFIX}"
+
+# Hash the input and take the last 20 bytes (40 hex chars) as the address
+DEPLOYED_ADDRESS="0x$(cast keccak "$CREATE2_INPUT" | tail -c 41)"
+
+echo "Computed CREATE2 address: $DEPLOYED_ADDRESS"
+
+# Check if contract already exists at this address
+EXISTING_CODE=$(cast code --rpc-url "$RPC_URL" "$DEPLOYED_ADDRESS" 2>/dev/null || echo "0x")
+
+if [[ "$EXISTING_CODE" != "0x" && -n "$EXISTING_CODE" ]]; then
+    echo "Contract already deployed at $DEPLOYED_ADDRESS"
+    echo "Skipping deployment..."
+    TX_HASH="(skipped - already deployed)"
+else
+    echo "Deploying contract via CREATE2..."
+    echo "Factory: $CREATE2_FACTORY"
+    echo "Salt: $SALT"
+
+    # The CREATE2 factory at 0x4e59b44847b379578588920ca78fbf26c0b4956c
+    # expects raw bytecode to be sent as calldata
+    TX_HASH=$(cast send \
+        --rpc-url "$RPC_URL" \
+        --private-key "$PRIVATE_KEY" \
+        "$CREATE2_FACTORY" \
+        "$SALT$(printf '%s' "$INIT_CODE" | sed 's/0x//')" \
+        --json | jq -r '.transactionHash')
+
+    if [[ -z "$TX_HASH" || "$TX_HASH" == "null" ]]; then
+        echo "Error: Failed to send transaction"
+        exit 1
+    fi
+
+    echo "Transaction hash: $TX_HASH"
+    echo "Waiting for confirmation..."
+
+    # Wait for transaction receipt
+    RECEIPT=$(cast receipt --rpc-url "$RPC_URL" "$TX_HASH" --json)
+
+    if [[ -z "$RECEIPT" ]]; then
+        echo "Error: Failed to get transaction receipt"
+        exit 1
+    fi
+
+    # Extract status
+    STATUS=$(echo "$RECEIPT" | jq -r '.status')
+
+    if [[ "$STATUS" != "0x1" && "$STATUS" != "1" ]]; then
+        echo "Error: Transaction failed"
+        echo "$RECEIPT" | jq .
+        exit 1
+    fi
+
+    echo "Contract deployed successfully!"
+fi
+
+echo "Address: $DEPLOYED_ADDRESS"
+echo "Transaction: $TX_HASH"
+
+# Verify contract if requested
+if [[ "$VERIFY" == "true" ]]; then
+    # Check if API key is provided
+    if [[ -z "$ETHERSCAN_API_KEY" ]]; then
+        echo "Warning: No Etherscan API key provided. Skipping verification."
+        echo "To verify, provide --etherscan-api-key or set ETHERSCAN_API_KEY environment variable"
+        exit 0
+    fi
+    
+    echo ""
+    echo "Waiting for a few blocks before verification..."
+    sleep 10
+    
+    echo "Verifying contract on Etherscan..."
+    
+    # Get compiler version from artifact
+    COMPILER_VERSION=$(jq -r '.metadata.compiler.version // empty' "$ARTIFACT_PATH" 2>/dev/null)
+    
+    # Build verification command
+    VERIFY_CMD="forge verify-contract"
+    VERIFY_CMD="$VERIFY_CMD --rpc-url $RPC_URL"
+    VERIFY_CMD="$VERIFY_CMD --etherscan-api-key $ETHERSCAN_API_KEY"
+    VERIFY_CMD="$VERIFY_CMD $DEPLOYED_ADDRESS"
+    # Get the compilation target path from artifact
+    COMPILATION_TARGET=$(jq -r '.metadata.settings.compilationTarget | keys[0]' "$ARTIFACT_PATH" 2>/dev/null)
+    if [[ -n "$COMPILATION_TARGET" ]]; then
+        VERIFY_CMD="$VERIFY_CMD ${COMPILATION_TARGET}:${CONTRACT_NAME}"
+    else
+        # Fallback to provided format
+        if [[ "$CONTRACT" == *":"* ]]; then
+            VERIFY_CMD="$VERIFY_CMD $CONTRACT"
+        else
+            VERIFY_CMD="$VERIFY_CMD ${CONTRACT_PATH}:${CONTRACT_NAME}"
+        fi
+    fi
+    
+    # Add compiler version if available
+    if [[ -n "$COMPILER_VERSION" ]]; then
+        VERIFY_CMD="$VERIFY_CMD --compiler-version $COMPILER_VERSION"
+    fi
+    
+    # Add constructor args if present
+    if [[ -n "$CONSTRUCTOR_ARGS" ]]; then
+        # Need to encode constructor args in ABI format for verification
+        eval "ENCODED_CONSTRUCTOR_ARGS=\$(cast abi-encode \"\$CONSTRUCTOR_SIG\" $CONSTRUCTOR_ARGS)"
+        VERIFY_CMD="$VERIFY_CMD --constructor-args $ENCODED_CONSTRUCTOR_ARGS"
+    fi
+    
+    # Add watch flag to wait for verification
+    VERIFY_CMD="$VERIFY_CMD --watch"
+    
+    # Execute verification with eval to properly handle the command
+    echo "Running verification command..."
+    if eval "$VERIFY_CMD"; then
+        echo "Contract verified successfully!"
+    else
+        echo "Warning: Contract verification failed. You can verify manually later."
+        echo "You can try verifying manually with:"
+        echo "forge verify-contract --rpc-url $RPC_URL --etherscan-api-key <API_KEY> $DEPLOYED_ADDRESS <CONTRACT_PATH>"
+    fi
+fi
