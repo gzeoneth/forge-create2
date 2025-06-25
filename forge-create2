@@ -199,6 +199,15 @@ verify_contract() {
 [[ $# -eq 0 ]] && usage 0
 
 while [[ $# -gt 0 ]]; do
+    # Check if argument contains equals sign (e.g., --flag=value or -f=value)
+    if [[ "$1" =~ ^-[^=]+=.+ ]]; then
+        # Split the flag and value at the equals sign
+        flag="${1%%=*}"
+        value="${1#*=}"
+        # Replace $1 with flag and insert value as $2, then continue normal processing
+        set -- "$flag" "$value" "${@:2}"
+    fi
+    
     case "$1" in
         --constructor-args)
             shift # Move past --constructor-args
@@ -486,29 +495,47 @@ if [[ -n "$CONSTRUCTOR_ARGS" ]]; then
     INIT_CODE="${BYTECODE}${ENCODED_ARGS#0x}"
 fi
 
+# Check if CREATE2 factory exists
+log_info "Checking CREATE2 factory at $CREATE2_FACTORY..."
+FACTORY_CODE=$(cast code "${CAST_READ_ARGS[@]}" "$CREATE2_FACTORY" 2>/dev/null || echo "0x")
+
+if [[ "$FACTORY_CODE" == "0x" || -z "$FACTORY_CODE" ]]; then
+    log_error "CREATE2 factory not found at $CREATE2_FACTORY"
+    log_error "The factory contract must be deployed before using forge-create2"
+    log_error "Expected factory: https://github.com/Arachnid/deterministic-deployment-proxy"
+    exit 1
+fi
+
 # Calculate deployment address
 DEPLOYMENT_ADDRESS=$(calculate_create2_address "$CREATE2_FACTORY" "$SALT" "$INIT_CODE")
 log_info "Factory: $CREATE2_FACTORY"
 log_info "CREATE2 address: $DEPLOYMENT_ADDRESS"
 
-# Check if already deployed (unless dry run)
-if [[ "$DRY_RUN" != true ]]; then
-    EXISTING_CODE=$(cast code "${CAST_READ_ARGS[@]}" "$DEPLOYMENT_ADDRESS" 2>/dev/null || echo "0x")
-    
-    if [[ "$EXISTING_CODE" != "0x" && -n "$EXISTING_CODE" ]]; then
-        log_info "Contract already deployed at $DEPLOYMENT_ADDRESS"
-        
-        # Still verify if requested
-        if [[ "$VERIFY" == true ]]; then
-            verify_contract
-        fi
-        exit 0
-    fi
-fi
+# (Removed redundant deployment check - now handled after calculating address)
+
+# Check if already deployed
+EXISTING_CODE=$(cast code "${CAST_READ_ARGS[@]}" "$DEPLOYMENT_ADDRESS" 2>/dev/null || echo "0x")
 
 # Exit if dry run
 if [[ "$DRY_RUN" == true ]]; then
-    log_success "Dry run complete. Contract would be deployed to: $DEPLOYMENT_ADDRESS"
+    if [[ "$EXISTING_CODE" != "0x" && -n "$EXISTING_CODE" ]]; then
+        log_info "Contract is already deployed at $DEPLOYMENT_ADDRESS"
+    else
+        log_info "Contract is not yet deployed at $DEPLOYMENT_ADDRESS"
+    fi
+    
+    log_success "Dry run complete."
+    exit 0
+fi
+
+# Check if already deployed (non-dry-run mode)
+if [[ "$EXISTING_CODE" != "0x" && -n "$EXISTING_CODE" ]]; then
+    log_info "Contract already deployed at $DEPLOYMENT_ADDRESS"
+    
+    # Still verify if requested
+    if [[ "$VERIFY" == true ]]; then
+        verify_contract
+    fi
     exit 0
 fi
 

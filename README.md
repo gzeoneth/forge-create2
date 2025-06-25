@@ -1,6 +1,6 @@
 # forge-create2
 
-A CLI tool for deterministic smart contract deployment using CREATE2 opcode through Foundry.
+A CLI tool for deterministic smart contract deployment using the CREATE2 opcode through Foundry.
 
 ## Overview
 
@@ -20,14 +20,46 @@ A CLI tool for deterministic smart contract deployment using CREATE2 opcode thro
 - **Dry Run Mode**: Preview deployment address without sending transactions
 - **Production Ready**: Comprehensive error handling and informative logging
 
+## Prerequisites
+
+- [Foundry](https://book.getfoundry.sh/getting-started/installation) - Required for `forge`, `cast`, and contract compilation
+- Bash 4.0+ - The script uses modern bash features
+- `jq` - Used for JSON parsing (usually pre-installed on most systems)
+
 ## Installation
 
-1. Ensure you have [Foundry](https://book.getfoundry.sh/getting-started/installation) installed
-2. Clone this repository
+1. Ensure you have [Foundry](https://book.getfoundry.sh/getting-started/installation) installed:
+   ```bash
+   curl -L https://foundry.paradigm.xyz | bash
+   foundryup
+   ```
+
+2. Clone this repository:
+   ```bash
+   git clone <repository-url>
+   cd forge-create2
+   ```
+
 3. Make the script executable:
    ```bash
    chmod +x forge-create2
    ```
+
+4. (Optional) Add to PATH for system-wide access:
+   ```bash
+   sudo cp forge-create2 /usr/local/bin/
+   # or
+   export PATH="$PATH:$(pwd)"
+   ```
+
+## Quick Start
+
+Deploy a simple contract with default settings:
+```bash
+./forge-create2 SimpleStorage \
+  --rpc-url https://sepolia-rollup.arbitrum.io/rpc \
+  --private-key <YOUR_PRIVATE_KEY>
+```
 
 ## Usage
 
@@ -42,13 +74,15 @@ CONTRACT can be specified as:
 ### Required Options
 
 - `--rpc-url <url>`: RPC endpoint URL (must start with http:// or https://)
+  - Supports both formats: `--rpc-url <url>` and `--rpc-url=<url>`
 - `--private-key <key>`: Private key for deployment (64 hex characters)
   - Can also use `FORGE_CREATE2_PRIVATE_KEY` environment variable
+  - Supports both formats: `--private-key <key>` and `--private-key=<key>`
 
 ### Optional Arguments
 
 - `--constructor-args <args>`: Constructor arguments (consumes all args until next `--` flag)
-- `--salt <value>`: Salt value for CREATE2 (default: 0)
+- `--salt <value>`: Salt value for CREATE2 (default: 0x0000000000000000000000000000000000000000000000000000000000000000)
 - `--verify`: Verify contract on Etherscan after deployment
 - `--etherscan-api-key <key>`: Etherscan API key for verification
   - Can also use `ETHERSCAN_API_KEY` environment variable
@@ -174,7 +208,17 @@ You can set these environment variables to avoid passing sensitive data via comm
 This tool uses the standard CREATE2 factory deployed at:
 `0x4e59b44847b379578588920ca78fbf26c0b4956c`
 
-This factory is deployed on most EVM chains at the same address.
+This factory is deployed on most EVM chains at the same address, including:
+- Ethereum Mainnet and testnets (Sepolia, Holesky)
+- Arbitrum One and Arbitrum Sepolia
+- Optimism and Base
+- Polygon, Avalanche, BSC
+- And many other EVM-compatible chains
+
+To verify if the factory exists on your target chain, you can use:
+```bash
+cast code 0x4e59b44847b379578588920ca78fbf26c0b4956c --rpc-url <YOUR_RPC_URL>
+```
 
 ## How CREATE2 Works
 
@@ -184,10 +228,10 @@ address = keccak256(0xff ++ factory ++ salt ++ keccak256(initCode))[12:]
 ```
 
 Where:
-- `0xff`: Constant to prevent collisions with CREATE
+- `0xff`: Constant byte to prevent collisions with CREATE opcode
 - `factory`: CREATE2 factory contract address
 - `salt`: 32-byte value to make the address deterministic
-- `initCode`: Contract bytecode + constructor arguments
+- `initCode`: Contract bytecode concatenated with ABI-encoded constructor arguments
 
 ## Security Considerations
 
@@ -213,13 +257,93 @@ bash test/forge-create2.t.sh
 
 ## Troubleshooting
 
-1. **"Contract already deployed"**: The contract is already deployed at the calculated address. Use a different salt to deploy to a new address.
+### Common Issues
 
-2. **"Failed to extract bytecode"**: Ensure the contract is compiled successfully and is not abstract or has unlinked libraries.
+1. **"Contract already deployed"**
+   - The contract is already deployed at the calculated address
+   - Solution: Use a different salt value to deploy to a new address
+   - Use `--dry-run` to check if an address is already occupied
 
-3. **"Invalid RPC URL format"**: The RPC URL must start with `http://` or `https://`.
+2. **"Failed to extract bytecode"**
+   - The contract might be abstract or have unlinked libraries
+   - Solution: Ensure the contract compiles successfully with `forge build`
+   - Check that all libraries are properly linked
 
-4. **"Invalid private key format"**: The private key must be 64 hexadecimal characters (with or without 0x prefix).
+3. **"Invalid RPC URL format"**
+   - The RPC URL must start with `http://` or `https://`
+   - Example: `--rpc-url https://eth.llamarpc.com` (correct)
+   - Example: `--rpc-url eth.llamarpc.com` (incorrect)
+
+4. **"Invalid private key format"**
+   - The private key must be 64 hexadecimal characters
+   - Both `0x` prefixed and non-prefixed formats are accepted
+   - Use environment variable `FORGE_CREATE2_PRIVATE_KEY` for better security
+
+5. **"CREATE2 factory not found"**
+   - The factory contract is not deployed on the target chain
+   - Verify with: `cast code 0x4e59b44847b379578588920ca78fbf26c0b4956c --rpc-url <YOUR_RPC>`
+   - The factory must be deployed before using this tool
+
+6. **"Transaction reverted"**
+   - Check that you have sufficient balance for gas fees
+   - Ensure constructor arguments are correctly formatted
+   - Verify the contract doesn't have a reverting constructor
+
+### Debug Mode
+
+For more detailed output during troubleshooting:
+```bash
+DEBUG=1 ./forge-create2 <CONTRACT> [OPTIONS]
+```
+
+## Advanced Usage
+
+### Using with Hardware Wallets
+
+The tool supports Foundry's hardware wallet integration:
+
+```bash
+# Using Ledger
+./forge-create2 MyContract --ledger --rpc-url <RPC>
+
+# Using Trezor  
+./forge-create2 MyContract --trezor --rpc-url <RPC>
+```
+
+### Gas Optimization
+
+Control gas settings for deployment:
+
+```bash
+./forge-create2 MyContract \
+  --gas-price 20gwei \
+  --gas-limit 3000000 \
+  --rpc-url <RPC> \
+  --private-key <KEY>
+```
+
+### Batch Deployments
+
+Deploy the same contract to multiple chains with identical addresses:
+
+```bash
+# Define common parameters
+SALT="0xdeadbeef"
+ARGS="1000000 MyToken MTK"
+
+# Deploy to multiple chains
+for RPC in "https://eth.llamarpc.com" "https://arb1.arbitrum.io/rpc" "https://mainnet.optimism.io"; do
+  ./forge-create2 Token \
+    --salt $SALT \
+    --constructor-args $ARGS \
+    --rpc-url $RPC \
+    --private-key $PRIVATE_KEY
+done
+```
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
